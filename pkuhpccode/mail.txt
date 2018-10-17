@@ -1,0 +1,5 @@
+short节点排除
+#SBATCH -x c07b03n16,c07b03n08,c07b03n09,c07b03n15
+long节点排除
+
+pau@ice.cat
