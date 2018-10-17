@@ -1,7 +1,7 @@
 #!/usr/bin/expect
 set timeout 15
 set passw [lindex $argv 0]
-spawn ssh chenxian_szf@10.100.1.88
+spawn ssh 
 expect "*assword:"
-send "ZJL19960311 $passw\n"
+send " $passw\n"
 interact
