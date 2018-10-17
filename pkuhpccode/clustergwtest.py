@@ -1,6 +1,8 @@
+
 # coding: utf-8
 
-# In[32]:
+# In[74]:
+
 
 import numpy as np
 import scipy.constants as sciconsts
@@ -11,10 +13,7 @@ import time
 import sys
 from multiprocessing import Process,Pool
 import scipy.optimize as sciop
-
-
-# In[33]:
-
+#version 1:
 '''parameters'''
 def chirp_mass(m1,m2):
     return np.power(m1*m2,0.6)/(np.power(m1+m2,0.2))
@@ -71,10 +70,7 @@ def f_rvacstart(fi,m_1,m_2):
     M=m_1+m_2
     return np.power(np.power(sciconsts.G*M,0.5)/(sciconsts.pi*fi),2.0/3.0)
 
-
-# In[35]:
-
-'''my Tmodel(considering gas (SI))'''
+'''my T model(considering gas (SI))'''
 def k_1cal(m_1,m_2):
     return 64.0*np.power(sciconsts.G,3.0)*m_1*m_2*(m_1+m_2)/5.0/np.power(sciconsts.c,5.0)
 def t_0cal(m_1,m_2,t_gas,a_0):
@@ -92,13 +88,14 @@ def hgas(t,m_1,m_2,t_gas,t_0,phi):
     return m_1*m_2/acalgas(t,k_1,t_gas,t_0)*np.cos(phi)/1e70
 
 
-# In[36]:
+# In[75]:
 
 #consts setting
+sivalue=0.125
 m_sun=1.9891e30
 years=365*24*3600.0
 mpc=3.261*sciconsts.light_year
-t_scale=4*years
+t_scale=4*years*sivalue
 
 
 # In[37]:
@@ -113,13 +110,12 @@ t_gas=1000.0*years
 a_0=3.0e8
 t_0g=t_0cal(m_1g,m_2g,t_gas,a_0)
 
-
 # In[38]:
 
 #(t_scale*0.01*4,N/0.01/t_scale,t_scale) 
 figas=freq_tgas(0,m_1g,m_2g,t_gas,t_0g)
 ffgas=freq_tgas(t_scale,m_1g,m_2g,t_gas,t_0g)
-Ng=10000000
+Ng=int(10000000*sivalue)
 t=np.linspace(0,t_scale,num=Ng)
 #tdomain interp1d
 n1=10000
@@ -133,10 +129,6 @@ phimo=sci_interpolate.interp1d(tphi,workphi)
 #tdomain point cal
 Tg=t_scale/Ng
 hfgas=hgas(t,m_1g,m_2g,t_gas,t_0g,phimo(t))
-
-
-# In[39]:
-
 #fft
 xs=np.linspace(0,1/2.0/Tg,num=Ng//2)
 hfgas1=fft.fft(hfgas)
@@ -145,14 +137,33 @@ hfgas_angle=np.arctan(hfgas1.imag/hfgas1.real)[0:Ng//2]
 hfgas2=2.0/Ng*hfgas_abs[0:Ng//2]
 hs=sci_interpolate.interp1d(xs,hfgas2)
 anglegas=sci_interpolate.interp1d(xs,hfgas_angle)
-A=sci_integrate.quad(lambda x:4*np.power(hs(x),2.0)/S_n_lisa(x),figas,ffgas,limit=1500,epsabs=0.005)
+
+
+# In[76]:
+
+A=sci_integrate.quad(lambda x:4*np.power(hs(x),2.0)/S_n_lisa(x),figas,ffgas,limit=1500,epsabs=0.0005)
 Aval=np.sqrt(A[0])
 Aerr=0.5/Aval*A[1]
+Aval,Aerr
 
 
-# In[40]:
+# In[78]:
 
-def find_max(m):
+# sciode
+def df_dtode(f,t,m_1,m_2):
+    m_c=chirp_mass(m_1,m_2)
+    M=m_1+m_2
+    mu=(m_1+m_2)/m_1/m_2
+    a1=743.0/336+11.0*mu/4/M
+    a2=sciconsts.G/np.power(sciconsts.c,3.0)
+    x=sciconsts.pi*M*f*a2
+    result=np.power(a2,5.0/3.0)*96.0/5*np.power(sciconsts.pi,8.0/3.0)*np.power(m_c,5.0/3.0)*np.power(f,11.0/3.0)*(1-a1*np.power(x,2.0/3.0)+4*sciconsts.pi*x)
+    return result
+
+
+# In[102]:
+
+def find_max2(m):
     mcv=m[0]*m_sun
     smrv=m[1]
     figas=m[2]
@@ -160,29 +171,27 @@ def find_max(m):
     sv=solvem(mcv,smrv)
     m1v=sv[0]
     m2v=sv[1]
-    fs=np.linspace(figas,ffgas,n1)
-    ts=np.zeros(n1)
-    i=0
-    while i<n1:
-        ts[i]=t_fvac2(fs[i],m1v,m2v,figas)
-        i=i+1
-    #t_fvac=sci_interpolate.interp1d(ts,fs)
-    ftv=sci_interpolate.interp1d(ts,fs)
+    n2=10000
+    ts=np.linspace(0,t_scale,n2)
+    yf=sci_integrate.odeint(df_dtode,figas,ts,args=(m1v,m2v))
+    ftv=sci_interpolate.interp1d(ts,yf.T[0])
     fr=ftv(ts)
-    phiv1=np.zeros(n1)
+    phiv1=np.zeros(n2)
     i=0
-    while i<n1:
+    while i<n2:
         phiv1[i]=sci_integrate.quad(lambda x:2*sciconsts.pi*ftv(x),0,ts[i])[0]
         i=i+1
     phiv=sci_interpolate.interp1d(ts,phiv1)
-    rs=np.zeros(n1)
+    
+    rs=np.zeros(n2)
     rs[0]=sciop.fsolve(f_rvac,f_rvacstart(figas,m1v,m2v),args=[m1v,m2v,figas])
-    i=1
-    while i<n1:
-        rs[i]=sciop.fsolve(f_rvac,rs[i-1],args=[m1v,m2v,fs[i]])
-        i=i+1
+    
+    for i in range(1,n2,1):
+        rs[i]=sciop.fsolve(f_rvac,rs[i-1],args=[m1v,m2v,fr[i]])
+    
     rv=sci_interpolate.interp1d(ts,rs)
-    t_scalev=ts[n1-1]
+    
+    t_scalev=ts[n2-1]
     t=np.linspace(0,t_scalev,num=Ng)
     hv=m1v*m2v/rv(t)*np.cos(phiv(t))/1e70
     xs=np.linspace(0,1/2.0/Tg,num=Ng//2)
@@ -192,57 +201,64 @@ def find_max(m):
     hfvac2=2.0/Ng*hfvac_abs[0:Ng//2]
     hvacr=sci_interpolate.interp1d(xs,hfvac2)
     anglevac=sci_interpolate.interp1d(xs,hfvac_angle)
-    B=sci_integrate.quad(lambda x:4*np.power(hvacr(x),2.0)/S_n_lisa(x),figas,ffgas,limit=1500,epsabs=0.005)
+    B=sci_integrate.quad(lambda x:4*np.power(hvacr(x),2.0)/S_n_lisa(x),figas,fr[n2-1],limit=1500,epsabs=0.005)
     Bval=np.sqrt(B[0])
     Berr=0.5/Bval*B[1]
     #phi max finding
-    phinum=10
+    phinum=100
     phics=np.linspace(0,2*sciconsts.pi,phinum)
     ffmax=0
     errmax=0
+    phimaxpos=0
     for phic in phics:
-        AB=sci_integrate.quad(lambda x:4*hvacr(x)*hs(x)/S_n_lisa(x)*np.cos(anglegas(x)-anglevac(x)+phic),figas,ffgas,limit=2500,epsrel=0.03)
+        AB=sci_integrate.quad(lambda x:4*hvacr(x)*hs(x)/S_n_lisa(x)*np.cos(anglegas(x)-anglevac(x)+phic),figas,fr[n2-1],limit=2500,epsrel=0.005)
         ff=abs(AB[0]/Aval/Bval)
         err=abs(1/Aval/Bval*AB[1])+abs(AB[0]/Aval/Aval/Bval*Aerr)+abs(AB[0]/Aval/Bval/Bval*Berr)
         #err1=abs(1*AB[1]/AB[0])+abs(1.0/Aval*Aerr)+abs(1.0/Bval*Berr)
         if ff>ffmax:
             ffmax=ff
             errmax=err
-    return ffmax,errmax,m[0],m[1]
+            phimaxpos=phic
+    print ffmax,errmax,m[0],m[1],phimaxpos
+    sys.stdout.flush()
+    return ffmax,errmax,m[0],m[1],phimaxpos
 
 
-# In[56]:
+# In[ ]:
 
-if __name__ == '__main__':
-    a=time.time()
-    pool = Pool(20)
-    results = []
-    tasknum=sys.argv[1]
-    #tasknum from 0-9 for 10nodes，20cpus in every node（pkuhpc system cn-short）
-    mci=37.0
-    mcf=38.0
-    n3=60
-    ns=10
-    nc=int(n3/ns)
-    del_mc=(mcf-mci)/nc/10
-    m_cs=np.linspace(37,37+del_mc*nc,nc)+nc*tasknum*del_mc
-    smrs=np.linspace(0.24,0.25,ns)
-    m_cs2=np.zeros(n3)
-    smrs2=np.zeros(n3)
-    for i in range(0,nc):
-        for j in range(0,ns):
-            m_cs2[i*ns+j]=m_cs[i]
-            smrs2[i*ns+j]=smrs[j]
-    f1=np.zeros(n3)+figas
-    f2=np.zeros(n3)+ffgas
-    para=[m_cs2,smrs2,f1,f2]
-    para1=np.transpose(para)
-    results = pool.map(find_max, para1)
-    b=time.time()
-    pool.close()
-    pool.join()
-    b=time.time()
-    print 'processes done, :',b-a,'seconds used'
-    fname=tasknum+data
-    np.save(fname,results)
+a=time.time()
+pool = Pool(20)
+results = []
+tasknum=int(sys.argv[1])
+#tasknum from 0-9 for 10nodes，20cpus in every node（pkuhpc system cn-short）
+mci=float(sys.argv[2])
+mcf=float(sys.argv[3])
+corenum=int(sys.argv[4])
+n3=600
+ns=100
+nc=n3/ns
+del_mc=(mcf-mci)/nc/corenum
+mcii=mci+nc*tasknum*del_mc
+mcff=mcii+del_mc*nc
+m_cs=np.linspace(mcii,mcff,int(nc))
+smrs=np.linspace(0.24,0.25,int(ns))
+m_cs2=np.zeros(int(n3))
+smrs2=np.zeros(int(n3))
+for i in range(0,nc):
+    for j in range(0,ns):
+        m_cs2[i*ns+j]=m_cs[i]
+        smrs2[i*ns+j]=smrs[j]
+f1=np.zeros(int(n3))+figas
+f2=np.zeros(int(n3))+ffgas
+para=[m_cs2,smrs2,f1,f2]
+para1=np.transpose(para)
+results = pool.map(find_max2, para1)
+b=time.time()
+pool.close()
+pool.join()
+b=time.time()
+print 'processes done, :',b-a,'seconds used'
+sys.stdout.flush()
+fname='f %s-%s'%(mcii,mcff)
+np.save(fname,results)
 
